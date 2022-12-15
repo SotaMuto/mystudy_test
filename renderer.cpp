@@ -12,6 +12,7 @@
 //シェーダーデバッグ設定を有効にする
 //#define DEBUG_SHADER
 
+#define ALIGN16 _declspec(align(16))
 
 //*********************************************************
 // 構造体
@@ -66,6 +67,19 @@ struct FUCHI
 	int			fill[3];
 };
 
+//波用定数バッファ構造体 もちろんシェーダー内のコンスタントバッファーと一致している必要あり
+struct SIMPLESHADER_CONSTANT_BUFFER
+{
+	XMMATRIX mWVP;//ワールド、ビュー、射影の合成変換行列
+	XMMATRIX mW;//ワールド行列
+	ALIGN16 	XMFLOAT3 vEyePos;//各頂点から見た、視点の位置
+	ALIGN16 float fMinDistance;
+	ALIGN16 float fMaxDistance;
+	ALIGN16 int iMaxDevide;
+	ALIGN16 XMFLOAT4 LightDir;
+	ALIGN16 XMFLOAT4 WaveMove;
+};
+
 
 //*****************************************************************************
 // プロトタイプ宣言
@@ -85,6 +99,13 @@ static ID3D11RenderTargetView* g_RenderTargetView = NULL;
 static ID3D11DepthStencilView* g_DepthStencilView = NULL;
 
 
+// 波用のVS,PSを用意する
+static ID3D11VertexShader*		g_WaveVertexShader = NULL;
+static ID3D11PixelShader*		g_WavePixelShader = NULL;
+static ID3D11HullShader*		g_WaveHullShader = NULL;
+static ID3D11DomainShader*		g_WaveDomainShader = NULL;
+static ID3D11ShaderResourceView*	g_NormalTexture;	//テクスチャー
+
 
 static ID3D11VertexShader*		g_VertexShader = NULL;
 static ID3D11PixelShader*		g_PixelShader = NULL;
@@ -97,6 +118,7 @@ static ID3D11Buffer*			g_LightBuffer = NULL;
 static ID3D11Buffer*			g_FogBuffer = NULL;
 static ID3D11Buffer*			g_FuchiBuffer = NULL;
 static ID3D11Buffer*			g_CameraBuffer = NULL;
+static ID3D11Buffer*			g_WaveBuffer = NULL;
 
 static ID3D11DepthStencilState* g_DepthStateEnable;
 static ID3D11DepthStencilState* g_DepthStateDisable;
@@ -364,6 +386,152 @@ void SetShaderCamera(XMFLOAT3 pos)
 
 
 
+// Waveシェーダーに書き換える
+void SetWaveShader(void)
+{
+	// 頂点シェーダー設定
+	g_ImmediateContext->VSSetShader(g_WaveVertexShader, nullptr, 0);
+	// ピクセルシェーダー設定
+	g_ImmediateContext->PSSetShader(g_WavePixelShader, nullptr, 0);
+	// ハルシェーダー設定
+	g_ImmediateContext->HSSetShader(g_WaveHullShader, nullptr, 0);
+	// ドメインシェーダー設定
+	g_ImmediateContext->DSSetShader(g_WaveDomainShader, nullptr, 0);
+}
+
+// デフォルトシェーダーに書き換える
+void SetDefaultShader(void)
+{
+	// 頂点シェーダー設定
+	g_ImmediateContext->VSSetShader(g_VertexShader, nullptr, 0);
+	// ピクセルシェーダー設定
+	g_ImmediateContext->PSSetShader(g_PixelShader, nullptr, 0);
+}
+
+// 波描画用
+void WavwRender(void)
+{
+	XMMATRIX mWorld;
+	XMMATRIX mView;
+	XMMATRIX mProj;
+
+	//ワールドトランスフォーム（絶対座標変換）
+	mWorld = XMMatrixTranspose(XMMatrixIdentity());
+
+	// ビュートランスフォーム（視点座標変換）
+	XMFLOAT3 vEyePt(0.0f, 1.5f, -2.0f); //カメラ（視点）位置
+	XMFLOAT3 vLookatPt(0.0f, 0.0f, 0.0f);//注視位置
+	XMFLOAT3 vUpVec(0.0f, 1.0f, 0.0f);//上方位置
+	//vEyePt.y += cz;
+	//vLookatPt.z+=cz;
+
+	XMMatrixLookAtLH(&vEyePt, &vLookatPt, &vUpVec);
+	// プロジェクショントランスフォーム（射影変換）
+	XMMatrixPerspectiveFovLH(XM_PI / 4, (FLOAT)SCREEN_WIDTH / (FLOAT)SCREEN_HEIGHT, 0.1f, 1000.0f);
+	//使用するシェーダーの登録
+	SetWaveShader();
+	//シェーダーのコンスタントバッファーに各種データを渡す
+	D3D11_MAPPED_SUBRESOURCE pData;
+	SIMPLESHADER_CONSTANT_BUFFER cb;
+	g_ImmediateContext->Map(g_WaveBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &pData);
+	{
+		//ワールド、カメラ、射影行列を渡す
+		cb.mWVP = XMMatrixMultiply(mWorld, XMMatrixMultiply(mView, mProj));
+		cb.mWVP = XMMatrixTranspose(cb.mWVP);
+		//ワールド行列を渡す
+		cb.mW = mWorld;
+		cb.mW = XMMatrixTranspose(cb.mW);
+		//モデルから見た視点（つまり、モデルの逆ワールドをかけた視点）を渡す
+		cb.vEyePos = vEyePt;
+		XMMATRIX Inv;
+		XMMatrixInverse(XMMatrixTranspose(&Inv), &(XMMatrixTranspose(XMMatrixMultiply(mWorld, mView))));
+		XMVector3TransformCoord(cb.vEyePos, cb.vEyePos);
+		//最小距離、最大距離
+		cb.fMinDistance = 0.5;
+		cb.fMaxDistance = 4.5;
+		//最大分割数
+		cb.iMaxDevide = 64;
+		//ライトの方向を渡す
+		cb.LightDir = XMFLOAT4(1, 0.7, 1, 0);
+		//波　関連
+		static XMFLOAT4 WaveMove(0, 0, 0, 0);
+		static XMFLOAT4 WaveHeight(0, 0, 0, 0);
+		WaveMove.x += 0.0002f;
+		//WaveMove.y+=0.00001f;
+		//波の位置変化量を渡す
+		cb.WaveMove = WaveMove;
+
+		memcpy_s(pData.pData, pData.RowPitch, (void*)(&cb), sizeof(cb));
+		g_ImmediateContext->Unmap(g_WaveBuffer, 0);
+	}
+
+
+	// 定数バッファ生成
+	D3D11_BUFFER_DESC hWaveBufferDesc;
+	hWaveBufferDesc.ByteWidth = sizeof(XMMATRIX);
+	hWaveBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	hWaveBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	hWaveBufferDesc.CPUAccessFlags = 0;
+	hWaveBufferDesc.MiscFlags = 0;
+	hWaveBufferDesc.StructureByteStride = sizeof(float);
+
+
+	//ワールドマトリクス
+	g_D3DDevice->CreateBuffer(&hWaveBufferDesc, NULL, &g_WorldBuffer);
+	g_ImmediateContext->VSSetConstantBuffers(0, 1, &g_WorldBuffer);
+	g_ImmediateContext->PSSetConstantBuffers(0, 1, &g_WorldBuffer);
+
+
+	//ビューマトリクス
+	g_D3DDevice->CreateBuffer(&hWaveBufferDesc, NULL, &g_ViewBuffer);
+	g_ImmediateContext->VSSetConstantBuffers(1, 1, &g_ViewBuffer);
+	g_ImmediateContext->PSSetConstantBuffers(1, 1, &g_ViewBuffer);
+
+	//プロジェクションマトリクス
+	g_D3DDevice->CreateBuffer(&hWaveBufferDesc, NULL, &g_ProjectionBuffer);
+	g_ImmediateContext->VSSetConstantBuffers(2, 1, &g_ProjectionBuffer);
+	g_ImmediateContext->PSSetConstantBuffers(2, 1, &g_ProjectionBuffer);
+
+
+
+
+
+
+	// サンプラーステート設定
+	D3D11_SAMPLER_DESC samplerDesc;
+	ZeroMemory(&samplerDesc, sizeof(samplerDesc));
+	samplerDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+	samplerDesc.MipLODBias = 0;
+	samplerDesc.MaxAnisotropy = 16;
+	samplerDesc.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
+	samplerDesc.MinLOD = 0;
+	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+	ID3D11SamplerState* samplerState = NULL;
+	g_D3DDevice->CreateSamplerState(&samplerDesc, &samplerState);
+
+	g_ImmediateContext->PSSetSamplers(0, 1, &samplerState);
+
+	D3DX11CreateShaderResourceViewFromFileA(g_D3DDevice, "WaterBump.bmp", NULL, NULL, &g_NormalTexture, NULL);
+
+	//テクスチャーをドメインシェーダーに渡す
+	g_ImmediateContext->DSSetSamplers(0, 1, &samplerState);
+	g_ImmediateContext->DSSetShaderResources(0, 1, &g_NormalTexture);
+	//テクスチャーをピクセルシェーダーに渡す
+	g_ImmediateContext->PSSetSamplers(0, 1, &samplerState);
+	g_ImmediateContext->PSSetShaderResources(0, 1, &g_NormalTexture);
+
+	//このコンスタントバッファーを、どのシェーダーで使うかを指定
+	g_ImmediateContext->VSSetConstantBuffers(0, 1, &g_WaveBuffer);//バーテックスシェーダーで使う
+	g_ImmediateContext->DSSetConstantBuffers(0, 1, &g_WaveBuffer);//ドメインシェーダーで使う
+	g_ImmediateContext->HSSetConstantBuffers(0, 1, &g_WaveBuffer);//ハルシェーダーで使う
+	g_ImmediateContext->PSSetConstantBuffers(0, 1, &g_WaveBuffer);//ピクセルシェーダーで使う
+
+}
+
 //=============================================================================
 // 初期化処理
 //=============================================================================
@@ -588,6 +756,17 @@ HRESULT InitRenderer(HINSTANCE hInstance, HWND hWnd, BOOL bWindow)
 
 	g_D3DDevice->CreateVertexShader( pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), NULL, &g_VertexShader );
 
+
+	// 波用VSシェーダーの登録
+	hr = D3DX11CompileFromFile("wave.hlsl", NULL, NULL, "VS", "vs_4_0", shFlag, 0, NULL, &pVSBlob, &pErrorBlob, NULL);
+	if (FAILED(hr))
+	{
+		MessageBox(NULL, (char*)pErrorBlob->GetBufferPointer(), "VS", MB_OK | MB_ICONERROR);
+	}
+
+	g_D3DDevice->CreateVertexShader(pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), NULL, &g_WaveVertexShader);
+
+
 	// 入力レイアウト生成
 	D3D11_INPUT_ELEMENT_DESC layout[] =
 	{
@@ -617,7 +796,38 @@ HRESULT InitRenderer(HINSTANCE hInstance, HWND hWnd, BOOL bWindow)
 
 	g_D3DDevice->CreatePixelShader( pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), NULL, &g_PixelShader );
 	
+
+	// 波用VSシェーダーの登録
+	hr = D3DX11CompileFromFile("wave.hlsl", NULL, NULL, "PS", "ps_4_0", shFlag, 0, NULL, &pPSBlob, &pErrorBlob, NULL);
+	if (FAILED(hr))
+	{
+		MessageBox(NULL, (char*)pErrorBlob->GetBufferPointer(), "PS", MB_OK | MB_ICONERROR);
+	}
+
+	g_D3DDevice->CreatePixelShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), NULL, &g_WavePixelShader);
+
 	pPSBlob->Release();
+
+	// 波用ハルシェーダーを作成
+	hr = D3DX11CompileFromFile("wave.hlsl", NULL, NULL, "HS", "hs_4_0", shFlag, 0, NULL, &pPSBlob, &pErrorBlob, NULL);
+	if (FAILED(hr))
+	{
+		MessageBox(NULL, (char*)pErrorBlob->GetBufferPointer(), "HS", MB_OK | MB_ICONERROR);
+	}
+
+	g_D3DDevice->CreateHullShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), NULL, &g_WaveHullShader);
+
+	pPSBlob->Release();
+
+	// 波用ドメインシェーダーを作成
+	hr = D3DX11CompileFromFile("wave.hlsl", NULL, NULL, "DS", "ds_4_0", shFlag, 0, NULL, &pPSBlob, &pErrorBlob, NULL);
+	if (FAILED(hr))
+	{
+		MessageBox(NULL, (char*)pErrorBlob->GetBufferPointer(), "DS", MB_OK | MB_ICONERROR);
+	}
+
+	g_D3DDevice->CreateDomainShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), NULL, &g_WaveDomainShader);
+
 
 
 	// 定数バッファ生成
@@ -628,6 +838,7 @@ HRESULT InitRenderer(HINSTANCE hInstance, HWND hWnd, BOOL bWindow)
 	hBufferDesc.CPUAccessFlags = 0;
 	hBufferDesc.MiscFlags = 0;
 	hBufferDesc.StructureByteStride = sizeof(float);
+
 
 	//ワールドマトリクス
 	g_D3DDevice->CreateBuffer(&hBufferDesc, NULL, &g_WorldBuffer);
@@ -643,6 +854,14 @@ HRESULT InitRenderer(HINSTANCE hInstance, HWND hWnd, BOOL bWindow)
 	g_D3DDevice->CreateBuffer(&hBufferDesc, NULL, &g_ProjectionBuffer);
 	g_ImmediateContext->VSSetConstantBuffers(2, 1, &g_ProjectionBuffer);
 	g_ImmediateContext->PSSetConstantBuffers(2, 1, &g_ProjectionBuffer);
+
+	//波マトリクス
+	g_D3DDevice->CreateBuffer(&hBufferDesc, NULL, &g_WaveBuffer);
+	g_ImmediateContext->VSSetConstantBuffers(8, 1, &g_WaveBuffer);
+	g_ImmediateContext->PSSetConstantBuffers(8, 1, &g_WaveBuffer);
+	g_ImmediateContext->HSSetConstantBuffers(8, 1, &g_WaveBuffer);
+	g_ImmediateContext->DSSetConstantBuffers(8, 1, &g_WaveBuffer);
+
 
 	//マテリアル情報
 	hBufferDesc.ByteWidth = sizeof(MATERIAL_CBUFFER);

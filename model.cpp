@@ -19,6 +19,36 @@
 #define	SCALE_MODEL			(10.0f)					// 回転慣性係数
 
 
+//*****************************************************************************
+// 構造体定義
+//*****************************************************************************
+
+// マテリアル構造体
+struct MODEL_MATERIAL
+{
+	char						Name[256];
+	MATERIAL					Material;
+	char						TextureName[256];
+};
+
+// 描画サブセット構造体
+struct SUBSET
+{
+	unsigned short	StartIndex;
+	unsigned short	IndexNum;
+	MODEL_MATERIAL	Material;
+};
+
+// モデル構造体
+struct MODEL
+{
+	VERTEX_3D		*VertexArray;
+	unsigned short	VertexNum;
+	unsigned short	*IndexArray;
+	unsigned short	IndexNum;
+	SUBSET			*SubsetArray;
+	unsigned short	SubsetNum;
+};
 
 
 
@@ -27,6 +57,11 @@
 //*****************************************************************************
 
 
+//*****************************************************************************
+// プロトタイプ宣言
+//*****************************************************************************
+void LoadObj( char *FileName, MODEL *Model );
+void LoadMaterial( char *FileName, MODEL_MATERIAL **MaterialArray, unsigned short *MaterialNum );
 
 
 

@@ -122,7 +122,7 @@ HRESULT InitMeshField(XMFLOAT3 pos, XMFLOAT3 rot,
 			// ”g‚Ì‚‚³‚ğAsinŠÖ”‚Å“¾‚é
 			// ”g‚Ì‚‚³@= sin( -Œo‰ßŠÔ * ü”g” + ‹——£ * ‹——£•â³ ) * U•
 			g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = sinf(-g_Time * g_wave_frequency + len * g_wave_correction) * g_wave_amplitude;
-			g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = 0.0f;
+			//g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = 0.0f;
 
 			// –@ü‚Ìİ’è
 			g_Vertex[z * (g_nNumBlockXField + 1) + x].Normal = XMFLOAT3(0.0f, 1.0, 0.0f);
@@ -273,8 +273,8 @@ void UpdateMeshField(void)
 			float len = (float)sqrt(dx * dx + dz * dz);
 
 			// ”g‚Ì‚‚³‚ğAsinŠÖ”‚Å“¾‚é
-			g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = 0.0f;
-			//g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = sinf(-g_Time * g_wave_frequency + len * g_wave_correction) * g_wave_amplitude;
+			//g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = 0.0f;
+			g_Vertex[z * (g_nNumBlockXField + 1) + x].Position.y = sinf(-g_Time * g_wave_frequency + len * g_wave_correction) * g_wave_amplitude;
 		}
 
 	}

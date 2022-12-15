@@ -17,11 +17,6 @@
 //*****************************************************************************
 #define	MODEL_ENEMY			"data/MODEL/enemy.obj"		// 読み込むモデル名
 
-#define	MODEL_CUBE0			"data/MODEL/enemy3.obj"		// 読み込むモーフィング名
-#define	MODEL_CUBE1			"data/MODEL/enemy3_2.obj"		// 読み込むモーフィング名
-
-
-
 #define	VALUE_MOVE			(5.0f)						// 移動量
 #define	VALUE_ROTATE		(XM_PI * 0.02f)				// 回転量
 
@@ -40,15 +35,6 @@
 static ENEMY			g_Enemy[MAX_ENEMY];				// エネミー
 
 static BOOL				g_Load = FALSE;
-
-//モーフィング用
-static ENEMY			g_Cube[2];						// エネミー
-static MODEL			g_Cube_Vertex[2];				//頂点情報の入ったデータ配列
-static VERTEX_3D		*g_Vertex = NULL;				//途中経過を記録する場所
-
-static float			g_time;
-static int				g_mof;
-
 
 
 static INTERPOLATION_DATA move_tbl[] = {	// pos, rot, scl, frame
@@ -92,46 +78,6 @@ HRESULT InitEnemy(void)
 
 	}
 
-	{
-		LoadModel(MODEL_CUBE0, &g_Cube[0].model);
-		g_Cube[0].load = TRUE;
-
-		g_Cube[0].pos = XMFLOAT3(-50.0f, ENEMY_OFFSET_Y, 20.0f);
-		g_Cube[0].rot = XMFLOAT3(0.0f, 0.0f, 0.0f);
-		g_Cube[0].scl = XMFLOAT3(1.0f, 1.0f, 1.0f);
-
-		g_Cube[0].spd = 0.0f;			// 移動スピードクリア
-		g_Cube[0].size = ENEMY_SIZE;	// 当たり判定の大きさ
-
-		// モデルのディフューズを保存しておく。色変え対応の為。
-		GetModelDiffuse(&g_Cube[0].model, &g_Cube[0].diffuse[0]);
-		
-		g_Cube[0].use = TRUE;			// TRUE:生きてる
-
-	}
-
-
-
-	//モーフィングするデータの準備
-	LoadObj(MODEL_CUBE0, &g_Cube_Vertex[0]);
-	LoadObj(MODEL_CUBE1, &g_Cube_Vertex[1]);
-
-
-
-	//中身を配列として使用できるように
-	g_Vertex = new VERTEX_3D[g_Cube_Vertex[0].VertexNum];
-
-	//差分の初期化
-	for (int i = 0; i < g_Cube_Vertex[0].VertexNum; i++)
-	{
-		g_Vertex[i].Position = g_Cube_Vertex[0].VertexArray[i].Position;
-		g_Vertex[i].Diffuse = g_Cube_Vertex[0].VertexArray[i].Diffuse;
-		g_Vertex[i].Normal = g_Cube_Vertex[0].VertexArray[i].Normal;
-		g_Vertex[i].TexCoord = g_Cube_Vertex[0].VertexArray[i].TexCoord;
-	}
-
-	g_time = 0.0f;
-	g_mof = 0;
 
 	// 0番だけ線形補間で動かしてみる
 	g_Enemy[0].move_time = 0.0f;		// 線形補間用のタイマーをクリア
@@ -157,8 +103,6 @@ void UninitEnemy(void)
 			g_Enemy[i].load = FALSE;
 		}
 	}
-
-	UnloadModel(&g_Cube[0].model);
 
 	g_Load = FALSE;
 }
@@ -214,57 +158,8 @@ void UpdateEnemy(void)
 			pos.y -= (ENEMY_OFFSET_Y - 0.1f);
 			SetPositionShadow(g_Enemy[i].shadowIdx, pos);
 		}
-
-
-		//モーフィング処理
-		{
-			int after, before;
-
-			after = (g_mof + 1) % 2;
-			before = g_mof % 2;
-
-
-			for (int i = 0; i < g_Cube_Vertex[0].VertexNum; i++)
-			{
-				g_Vertex[i].Position.x = g_Cube_Vertex[after].VertexArray[i].Position.x - g_Cube_Vertex[before].VertexArray[i].Position.x;
-				g_Vertex[i].Position.y = g_Cube_Vertex[after].VertexArray[i].Position.y - g_Cube_Vertex[before].VertexArray[i].Position.y;
-				g_Vertex[i].Position.z = g_Cube_Vertex[after].VertexArray[i].Position.z - g_Cube_Vertex[before].VertexArray[i].Position.z;
-
-				g_Vertex[i].Position.x *= g_time;
-				g_Vertex[i].Position.y *= g_time;
-				g_Vertex[i].Position.z *= g_time;
-
-				g_Vertex[i].Position.x += g_Cube_Vertex[after].VertexArray[i].Position.x;
-				g_Vertex[i].Position.y += g_Cube_Vertex[after].VertexArray[i].Position.y;
-				g_Vertex[i].Position.z += g_Cube_Vertex[after].VertexArray[i].Position.z;
-
-			}
-
-			g_time += 0.01f;
-
-			if (g_time > 1.0f)
-			{
-				g_mof++;
-				g_time = 0.0f;
-			}
-
-			//頂点情報を上書き
-			{
-				D3D11_BUFFER_DESC bd;
-				ZeroMemory(&bd, sizeof(bd));
-				bd.Usage = D3D11_USAGE_DEFAULT;
-				bd.ByteWidth = sizeof(VERTEX_3D) * g_Cube_Vertex[0].VertexNum;
-				bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-				bd.CPUAccessFlags = 0;
-
-				D3D11_SUBRESOURCE_DATA sd;
-				ZeroMemory(&sd, sizeof(sd));
-				sd.pSysMem = g_Vertex;
-
-				GetDevice()->CreateBuffer(&bd, &sd, &g_Cube[i].model.VertexBuffer);
-			}
-		}
 	}
+
 }
 
 //=============================================================================
@@ -305,37 +200,6 @@ void DrawEnemy(void)
 		// モデル描画
 		DrawModel(&g_Enemy[i].model);
 	}
-
-	{
-		XMMATRIX mtxScl, mtxRot, mtxTranslate, mtxWorld;
-
-		// ワールドマトリックスの初期化
-		mtxWorld = XMMatrixIdentity();
-
-		// スケールを反映
-		mtxScl = XMMatrixScaling(g_Cube[0].scl.x, g_Cube[0].scl.y, g_Cube[0].scl.z);
-		mtxWorld = XMMatrixMultiply(mtxWorld, mtxScl);
-
-		// 回転を反映
-		mtxRot = XMMatrixRotationRollPitchYaw(g_Cube[0].rot.x, g_Cube[0].rot.y + XM_PI, g_Cube[0].rot.z);
-		mtxWorld = XMMatrixMultiply(mtxWorld, mtxRot);
-
-		// 移動を反映
-		mtxTranslate = XMMatrixTranslation(g_Cube[0].pos.x, g_Cube[0].pos.y, g_Cube[0].pos.z);
-		mtxWorld = XMMatrixMultiply(mtxWorld, mtxTranslate);
-
-		// ワールドマトリックスの設定
-		SetWorldMatrix(&mtxWorld);
-
-		XMStoreFloat4x4(&g_Cube[0].mtxWorld, mtxWorld);
-
-
-		// モデル描画
-		DrawModel(&g_Cube[0].model);
-	}
-
-
-
 
 	// カリング設定を戻す
 	SetCullingMode(CULL_MODE_BACK);

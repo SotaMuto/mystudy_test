@@ -9,43 +9,10 @@
 #include "main.h"
 #include "renderer.h"
 
-
-//*****************************************************************************
-// 構造体定義
-//*****************************************************************************
-
-// マテリアル構造体
-struct MODEL_MATERIAL
-{
-	char						Name[256];
-	MATERIAL					Material;
-	char						TextureName[256];
-};
-
-// 描画サブセット構造体
-struct SUBSET
-{
-	unsigned short	StartIndex;
-	unsigned short	IndexNum;
-	MODEL_MATERIAL	Material;
-};
-
-// モデル構造体
-struct MODEL
-{
-	VERTEX_3D		*VertexArray;
-	unsigned short	VertexNum;
-	unsigned short	*IndexArray;
-	unsigned short	IndexNum;
-	SUBSET			*SubsetArray;
-	unsigned short	SubsetNum;
-};
-
-
-
 //*********************************************************
 // 構造体
 //*********************************************************
+
 // マテリアル構造体
 
 #define MODEL_MAX_MATERIAL		(16)		// １モデルのMaxマテリアル数
@@ -89,8 +56,3 @@ void GetModelDiffuse(DX11_MODEL *Model, XMFLOAT4 *diffuse);
 void SetModelDiffuse(DX11_MODEL *Model, int mno, XMFLOAT4 diffuse);
 
 
-//*****************************************************************************
-// プロトタイプ宣言
-//*****************************************************************************
-void LoadObj(char *FileName, MODEL *Model);
-void LoadMaterial(char *FileName, MODEL_MATERIAL **MaterialArray, unsigned short *MaterialNum);
